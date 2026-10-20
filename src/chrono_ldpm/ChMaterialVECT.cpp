@@ -19,8 +19,15 @@
 
 #include "chrono_ldpm/ChMaterialVECT.h"
 
+#include <fstream>
+
 namespace chrono {
 namespace ldpm {
+
+static std::ofstream& GetFacetDebugFile() {
+    static std::ofstream file("facet_fiber_debug.dat", std::ios::out);
+    return file;
+}
 
 // Construct an isotropic material.
 
@@ -81,6 +88,7 @@ ChMaterialVECT::~ChMaterialVECT()	{};
 // statev(18): normal N fiber stress
 // statev(19): shear M fiber stress
 // statev(20): shear L fiber stress
+// statev(21): internal work in fiber
 
 void ChMaterialVECT::ComputeStress(ChVectorDynamic<>& dmstrain,
                                    double& len,
@@ -154,11 +162,16 @@ void ChMaterialVECT::ComputeStress(ChVectorDynamic<>& dmstrain,
 		dmstrain_in = dmstrain - dstress_in;
 		double DE = len * area * ((stress_ldpm + stress_old)/2).dot(dmstrain_in);
         
+		/*
 		if (!fiber.empty() && w.Length() > 10e-16 && mstrain(0) > 10e-16) {
-
 			if (w_N < 0) {
-                w = -w;
-            } 
+                w = -w; //crack width always positive
+            }
+		*/
+		w_N = std::max(w_N, 0.0);
+		w = ChVector3d(w_N, w_M, w_L);
+
+		if (!fiber.empty() && w_N > 10e-16 && mstrain(0) > 10e-16) {
 
 			//std::cout << "start processing fiber "<< std::endl;
 
@@ -197,9 +210,6 @@ void ChMaterialVECT::ComputeStress(ChVectorDynamic<>& dmstrain,
 			stress_fiber(0) = P_n / area;
 			stress_fiber(1) = P_m / area;
 			stress_fiber(2) = P_l / area;
-			// mstress(0) = mstress(0) + P_n / area;
-            // mstress(1) = mstress(1) + P_m / area;
-            // mstress(2) = mstress(2) + P_l / area;
 
 			const auto stress_old_fiber = statev.segment(18,3);
 			Wint_fiber = len * area * ((stress_fiber + stress_old_fiber)/2).dot(dmstrain);
@@ -649,11 +659,13 @@ ChVector3d ChMaterialVECT::FiberForce(ChVector3d w, double Pf0, std::vector<doub
         nf_local = nf_local * (-1);
 	}
 
+
 	auto [Pf,Ps,vs, vl, kf] =
 	    //ChFiber::FRP(w, Pf0, nf_local, nn, ksp, ksn, df, Ef, t0, Gd, Ls, Ll, beta_fiber, vmaxs, vmaxl, pmaxs, pmaxl);
         ChFiber::FRP(w, Pf0, nf_local, nn, ksp, ksn, df, Ef, t0, Gd, Ls, Ll, beta_fiber, vmaxs, vmaxl, pmaxs, pmaxl, sigmat);
 
 	double Pl = ChFiber::Pv(vl, Ef, df, t0, Gd, Ll, beta_fiber, vmaxl, pmaxl);
+
 
 	if (vs > vmaxs) {
 		ifiber[7] = vs;
@@ -661,23 +673,36 @@ ChVector3d ChMaterialVECT::FiberForce(ChVector3d w, double Pf0, std::vector<doub
 	}
 	if (vl > vmaxl) {
 		ifiber[8] = vl;
-		ifiber[10] = Ps;
+		ifiber[10] = Pl;
 	}
-	
+
+	// Cap + soft floor while Ps>0
+	const double kf_max = 1e4;
+	const double kf_min = 1e-3;
+	if (kf > kf_max) kf = kf_max;
+	if (kf < 0.0) kf = 0.0;
+	if (Ps > 1e-12 && kf < kf_min) kf = kf_min;
 	ifiber[11] = kf;
+
 	
 	double sigmauf = this->Get_sigmauf();
     double krup = this->Get_krup();
 
-    double phi_prime = acos(nf_local.Dot(Pf.GetNormalized()));
-    double Pf_u = sigmauf * exp(-krup * phi_prime) * CH_PI * df * df/4;
+	// Rupture clip + kf=0; guard zero Pf for acos
+	if (Pf.Length() > 1e-16) {
+		double cosphi = nf_local.Dot(Pf.GetNormalized());
+		cosphi = std::max(-1.0, std::min(1.0, cosphi));
+		double phi_prime = acos(cosphi);
+		double Pf_u = sigmauf * exp(-krup * phi_prime) * CH_PI * df * df / 4;
 
-	if (Pf_u <= 0) {
-        std::cout << "Pf_u < 0 "<< std::endl;
-	}
+		if (Pf_u <= 0) {
+			std::cout << "Pf_u < 0 " << std::endl;
+		}
 
-    if (Pf.Length() > Pf_u) {
-        Pf = Pf_u * Pf.GetNormalized();
+		if (Pf.Length() > Pf_u) {
+			Pf = Pf_u * Pf.GetNormalized();
+			ifiber[11] = 0.0;
+		}
 	}
     //std::cout << "nf vector" << nf << std::endl;
     //std::cout << "nf' vector" << nf_local << std::endl;

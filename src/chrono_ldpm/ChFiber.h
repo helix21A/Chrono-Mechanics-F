@@ -137,6 +137,15 @@ class ChLdpmApi ChFiber {
 	static double
     ComputeFiberTangent(double v, double Ef, double df, double t0, double Gd, double Le, double beta, double vmax, double pmax);
 
+    /*
+    /// Option 1: full consistent dPf/dw (terms 1+2+3); term3 skipped if sin(phi')~0
+    static ChMatrix33<double> ComputeFiberJacobian(const ChVector3d& w,
+                                                   const ChVector3d& nf,
+                                                   double Ps,
+                                                   double kf,
+                                                   double ksn);
+    */
+
     static double error(double x,
                         double w,
                         double sf,

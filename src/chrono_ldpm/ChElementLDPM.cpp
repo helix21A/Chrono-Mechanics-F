@@ -23,10 +23,8 @@
 
 #include "chrono_ldpm/ChElementLDPM.h"
 
-
 namespace chrono {
 namespace ldpm {
-
 
 
 ChElementLDPM::ChElementLDPM() : Volume(0) {
@@ -370,7 +368,6 @@ void ChElementLDPM::ComputeStiffnessMatrix() {
     	unsigned int jnd=facetNodeNums(iface,1);    	
     	double E0= facet->Get_material()->Get_E0();
     	double alpha=facet-> Get_material()->Get_alpha(); 
-    	double ET=alpha*E0;
     	//    	
     	//
     	// Get facet area and length of beam
@@ -405,11 +402,7 @@ void ChElementLDPM::ComputeStiffnessMatrix() {
 	    	//
 	    	mBJ.block<1,6>(id,0) = n.transpose()*AJ/length;
     	}
-	    //
-	    
-	    //std::cout<<"mBI:\n"<<mBI<<std::endl;
-	    //std::cout<<"mBJ:\n"<<mBJ<<std::endl;	    
-	    
+
 	    // Kii
 	    StiffnessMatrix.block<6,6>(ind*6,ind*6)+=( aLE_N*mBI.block<1,6>(0,0).transpose()*mBI.block<1,6>(0,0)+
 	    			aLE_T*(mBI.block<1,6>(1,0).transpose()*mBI.block<1,6>(1,0)+
@@ -430,36 +423,26 @@ void ChElementLDPM::ComputeStiffnessMatrix() {
 		std::vector<std::vector<double>> fiber = (iface < fiber_new.size()) ? fiber_new[iface] : facet->Get_fiber();
 		double crack_threshold = 1e-10;
 		double crack_width = facet->Get_StateVar()(11);
-		
-		if (!fiber.empty()&& crack_width > crack_threshold) {
-			
-			//double Ef = facet->Get_material()->Get_Ef();
-			
+
+		if (!fiber.empty() && crack_width > crack_threshold) {
             for (std::vector<double>& ifiber : fiber) {
-				
-				ChVectorN<double,3> nf_global;
-				nf_global << ifiber[0], ifiber[1], ifiber[2];
-				nf_global.normalize();
+				ChVector3d nf_g(ifiber[0], ifiber[1], ifiber[2]);
+				ChVector3d nf_local_v = (nmL * nf_g).GetNormalized();
+				if (nf_local_v.x() < 0)
+					nf_local_v = -nf_local_v;
+				ChVectorN<double,3> nf_local;
+				nf_local << nf_local_v.x(), nf_local_v.y(), nf_local_v.z();
 
 				double kf = ifiber[11];
-				
-				ChMatrix33<double> Df = kf * (nf_global * nf_global.transpose());
+
+				ChMatrix33<double> Df = kf * (nf_local * nf_local.transpose());
 				StiffnessMatrix.block<6,6>(ind*6,ind*6) += (mBI.transpose() * Df * mBI);
 				StiffnessMatrix.block<6,6>(jnd*6,jnd*6) += (mBJ.transpose() * Df * mBJ);
 				StiffnessMatrix.block<6,6>(ind*6,jnd*6) -= (mBI.transpose() * Df * mBJ);
 				StiffnessMatrix.block<6,6>(jnd*6,ind*6) -= (mBJ.transpose() * Df * mBI);
-				
-			}
-			
-			double error = (StiffnessMatrix - StiffnessMatrix.transpose()).norm();
-			if (error > 1e-10){
-				std::cout << "StiffnessMatrix is not symmetric "<< std::endl;
-			}
-			if (StiffnessMatrix.determinant()<1e-12){
-				std::cout << "StiffnessMatrix determinant is very small "<< std::endl;
 			}
 		}
-		
+
 	    iface++;	    
     }    
     //    

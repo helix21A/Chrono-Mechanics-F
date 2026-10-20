@@ -19,6 +19,9 @@
 
 #include "chrono_ldpm/ChFiber.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace chrono {
 namespace ldpm {
 
@@ -182,35 +185,38 @@ std::tuple<ChVector3d, double, double, double,double> ChFiber::FRP(ChVector3d w,
 	
 	double kfs = ComputeFiberTangent(vs_result, Ef, df, t0, Gd, Ls, beta, vmaxs, pmaxs);
     double kfl = ComputeFiberTangent(vl_result, Ef, df, t0, Gd, Ll, beta, vmaxl, pmaxl);
-	double kf = (kfl + kfs)/1;
+	// double kf = (kfl + kfs)/1; // Too stiff
+	double kf = 0.0;
+	if (std::abs(kfs + kfl) > 1e-16)
+		kf = (kfs * kfl) / (kfs + kfl);
     return std::make_tuple(Pf_result, Ps_result, vs_result, vl_result,kf);
 }
 
 double ChFiber::ComputeFiberTangent(double v, double Ef, double df, double t0, double Gd, double Le, double beta, double vmax, double pmax) {
-    //const double v0 = 1e-6; 
-    const double pi = CH_PI; 
+    const double pi = CH_PI;
 
-    if (v < vmax) {
+    if (v < vmax && vmax > 0.0) {
         return pmax / vmax;
     }
 	double vd = 2 * t0 * Le * Le / Ef / df + sqrt(8 * Gd * Le * Le / Ef / df);
-    if (v < vd) {   
+    double p0 = pi * Le * df * t0;
+
+    if (v < vd) {
+        /*
+        double v0 = 1e-6;
         double tmp = pi * pi * Ef * df * df * df / 2.0;
-
-        //double Gd_modifier = Gd * (1 - exp(-v / v0));  
-        //double P = sqrt(tmp * (t0 * v + Gd_modifier));
-        double P = sqrt(tmp * (t0 * v + Gd));            //LDPM-Fiber paper Eq.5 force (no (1-exp(-v/v0)) regularization
-        if (P < 1e-12) return 0; 
-        //double dGd_dv = Gd * exp(-v / v0) / v0;
-        //double dPv_dv = (0.5 / P) * tmp * (t0 + dGd_dv);
-        double dPv_dv = (0.5 / P) * tmp * t0;
-
+        double Gd_modifier = Gd * (1.0 - exp(-v / v0));
+        double P = sqrt(tmp * (t0 * v + Gd_modifier));
+        if (P < 1e-12) return 0;
+        double dGd_dv = Gd * exp(-v / v0) / v0;
+        double dPv_dv = (0.5 / P) * tmp * (t0 + dGd_dv);
         return dPv_dv;
+        */
+        if (vd > 1e-16)
+            return p0 / vd;
+        return 0.0;
     }
     else {
-        
-        double p0 = pi * Le * df * t0;
-
         double term1 = - (1.0 / Le) * (1.0 + beta * (v - vd) / df);
         double term2 = (beta / df) * (1.0 - (v - vd) / Le);
 
@@ -219,6 +225,46 @@ double ChFiber::ComputeFiberTangent(double v, double Ef, double df, double t0, d
         return dPv_dv > 0 ? dPv_dv : 0.0;
     }
 }
+
+/*
+ChMatrix33<double> ChFiber::ComputeFiberJacobian(const ChVector3d& w,
+                                                 const ChVector3d& nf,
+                                                 double Ps,
+                                                 double kf,
+                                                 double ksn) {
+    double v = w.Length();
+    if (v < 1e-12) {
+        ChMatrix33<double> Df;
+        Df.setZero();
+        Df(0, 0) = Df(1, 1) = Df(2, 2) = kf;
+        return Df;
+    }
+
+    ChVector3d n = w / v;
+    double c = nf.Dot(n);
+    c = std::max(-1.0, std::min(1.0, c));
+    double phi = std::acos(c);
+    double f = std::exp(ksn * phi);
+    double s = std::sqrt(std::max(0.0, 1.0 - c * c));
+
+    ChVectorN<double, 3> nv, nfv;
+    nv << n.x(), n.y(), n.z();
+    nfv << nf.x(), nf.y(), nf.z();
+    ChMatrix33<double> nxn = nv * nv.transpose();
+    ChMatrix33<double> I;
+    I.setIdentity();
+
+    // terms 1+2 (symmetric)
+    ChMatrix33<double> Df = f * (kf * nxn + (Ps / v) * (I - nxn));
+
+    // term 3 (non-symmetric snubbing); skip near phi'~0
+    if (s > 1e-8 && std::abs(ksn) > 1e-16 && std::abs(Ps) > 1e-16) {
+        ChMatrix33<double> n_nf = nv * nfv.transpose();
+        Df -= f * (ksn * Ps / (v * s)) * (n_nf - c * nxn);
+    }
+    return Df;
+}
+*/
 
 /*
 ChVector3d ChFiber::FRP(ChVector3d w, double Pf0, ChVector3d nf,
@@ -282,17 +328,6 @@ std::tuple<ChVector3d, double, double, double> ChFiber::Pf_cal(ChVector3d w,
     //print(theta)
     //double sf = Pfn*math.sin(theta/2)/(ksp*sigma_t*df*math.cos(theta/2)*math.cos(theta/2))
 
-    //double cos_th = std::max(-1.0, std::min(1.0, nf.Dot(n)));
-    //double theta = std::acos(cos_th);
-    //double Pfn = Pf * std::abs(cos_th);
-    //
-    //double sf = 0.0;
-    //if (ksp > 0.0 && sigmat > 0.0 && df > 0.0 && std::abs(std::cos(theta / 2.0)) > 1e-8) {
-    //    sf = Pfn * std::sin(theta / 2.0) /
-    //         (ksp * sigmat * df * std::cos(theta / 2.0) * std::cos(theta / 2.0));
-    //}
-    //sf = std::max(sf, 0.0);
-    //sf = std::min(sf, 0.5 * std::min(Ls, Ll));
 
     double sf = 0;
 
@@ -327,22 +362,27 @@ double ChFiber::Pv(double v, double Ef, double df, double t0, double Gd, double 
 
     double P;
 
-    if (v < vmax) {
+    if (v < vmax && vmax > 0.0) {
         return pmax * pow(v / vmax, 1);
     }
-    
+
+    double p0 = CH_PI * Le * df * t0;
+
     if (v < vd) {
+        /*
         double tmp = CH_PI * CH_PI * Ef * df * df * df / 2;
-		//double v0 = 1e-6;
-		//double Gd_modifier = Gd * (1-exp(-v/v0));
-        //P = pow(tmp * (t0 * v + Gd_modifier), 0.5);
-        P = pow(tmp * (t0 * v + Gd), 0.5);               //LDPM-Fiber paper Eq.5 force removed (1-exp(-v/v0)) regularization
+        double v0 = 1e-6;
+        double Gd_modifier = Gd * (1-exp(-v/v0));
+        P = pow(tmp * (t0 * v + Gd_modifier), 0.5);
+        P = pow(tmp * (t0 * v + Gd), 0.5);
+        */
+        if (vd > 1e-16)
+            P = p0 * (v / vd);
+        else
+            P = 0.0;
     }
-        
     else {
-        double p0 = CH_PI * Le * df * t0;
         P = p0 * (1 - (v - vd) / Le) * (1 + beta * (v - vd) / df);
-    
     }
     if (P < 0) {
         std::cout << "v= " << v << " vd= " << vd << " Le= " << Le << std::endl;
@@ -433,6 +473,8 @@ double beta) { auto f = [&](double x) { return error(x, w, sf, Ef, df, t0, Gd, L
 
 
 
+//compatibity using fa and fb
+/*
 std::tuple<double, double, double> ChFiber::compatibility(double w,
                                                           double sf,
                                                           double Ef,
@@ -541,6 +583,104 @@ std::tuple<double, double, double> ChFiber::compatibility(double w,
     double vs = x0 * (w - 2 * sf);
     double vl = (1-x0) * (w - 2 * sf);
     //double vl = (1 - x0) * (w - 2 * sf);
+    double Ps = Pv(vs, Ef, df, t0, Gd, Ls - sf, beta, vmaxs, pmaxs);
+    return std::make_tuple(Ps, vs, vl);
+}
+*/
+// compatibility: bisection + short-governs fallback (no Ps=0)
+std::tuple<double, double, double> ChFiber::compatibility(double w,
+                                                          double sf,
+                                                          double Ef,
+                                                          double df,
+                                                          double t0,
+                                                          double Gd,
+                                                          double Ls,
+                                                          double Ll,
+                                                          double beta,
+                                                          double vmaxs,
+                                                          double vmaxl,
+                                                          double pmaxs,
+                                                          double pmaxl) {
+    double a = 0;
+    double b = 1;
+    double x0;
+    double fx0 = 0.0;
+
+    const double w_eff = w - 2.0 * sf;
+    if (w_eff <= 0.0)
+        return {0.0, 0.0, 0.0};
+
+    if (Ls < w) {
+        b = Ls / w_eff;
+        if (b > 1.0) b = 1.0;
+        if (b < 0.0) b = 0.0;
+    }
+
+    double fa = error(a, w, sf, Ef, df, t0, Gd, Ls, Ll, beta, vmaxs, vmaxl, pmaxs, pmaxl);
+    double fb = error(b, w, sf, Ef, df, t0, Gd, Ls, Ll, beta, vmaxs, vmaxl, pmaxs, pmaxl);
+
+    double tol = 1e-5;
+
+    if (std::abs(fa) < tol) {
+        double vs = a * w_eff;
+        double vl = (1 - a) * w_eff;
+        double Ps = Pv(vs, Ef, df, t0, Gd, Ls - sf, beta, vmaxs, pmaxs);
+        return std::make_tuple(Ps, vs, vl);
+    }
+
+    if (std::abs(fb) < tol) {
+        double vs = b * w_eff;
+        double vl = (1 - b) * w_eff;
+        double Ps = Pv(vs, Ef, df, t0, Gd, Ls - sf, beta, vmaxs, pmaxs);
+        return std::make_tuple(Ps, vs, vl);
+    }
+
+    if (fa * fb > 0) {
+        const double Ls_eff = Ls - sf;
+        const double Ll_eff = Ll - sf;
+        double vs = std::min(w_eff, Ls_eff);
+        double vl = w_eff - vs;
+        vl = std::min(std::max(vl, 0.0), Ll_eff);
+        double Ps = Pv(vs, Ef, df, t0, Gd, Ls_eff, beta, vmaxs, pmaxs);
+        return std::make_tuple(Ps, vs, vl);
+    }
+
+    while ((b - a) > 1e-14) {
+        x0 = (a + b) / 2.0;
+        fx0 = error(x0, w, sf, Ef, df, t0, Gd, Ls, Ll, beta, vmaxs, vmaxl, pmaxs, pmaxl);
+
+        if (std::abs(fx0) < tol)
+            break;
+
+        if (fa * fx0 < 0) {
+            b = x0;
+            fb = fx0;
+        } else if (fb * fx0 < 0) {
+            a = x0;
+            fa = fx0;
+        } else {
+            const double Ls_eff = Ls - sf;
+            const double Ll_eff = Ll - sf;
+            double vs = std::min(w_eff, Ls_eff);
+            double vl = w_eff - vs;
+            vl = std::min(std::max(vl, 0.0), Ll_eff);
+            double Ps = Pv(vs, Ef, df, t0, Gd, Ls_eff, beta, vmaxs, pmaxs);
+            return std::make_tuple(Ps, vs, vl);
+        }
+    }
+
+    if (std::abs(fx0) > tol) {
+        const double Ls_eff = Ls - sf;
+        const double Ll_eff = Ll - sf;
+        double vs = std::min(w_eff, Ls_eff);
+        double vl = w_eff - vs;
+        vl = std::min(std::max(vl, 0.0), Ll_eff);
+        double Ps = Pv(vs, Ef, df, t0, Gd, Ls_eff, beta, vmaxs, pmaxs);
+        return std::make_tuple(Ps, vs, vl);
+    }
+
+    double vs = x0 * w_eff;
+    double vl = (1 - x0) * w_eff;
     double Ps = Pv(vs, Ef, df, t0, Gd, Ls - sf, beta, vmaxs, pmaxs);
     return std::make_tuple(Ps, vs, vl);
 }

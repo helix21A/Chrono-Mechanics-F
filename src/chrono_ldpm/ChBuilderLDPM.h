@@ -59,10 +59,10 @@ class ChLdpmApi ChBuilderLDPM {
 				std::string& LDPM_GeoName, bool isFiber = false);
 	
   ///	
-	/// Reader for multy material LDPM (P-LDPM)
+	/// Reader for multy material LDPM (P-LDPM). isFiber=true reads fiberfacet assign.
 	///    
     void read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::vector<std::shared_ptr<ldpm::ChMaterialVECT>> vect_mat, std::string& LDPM_data_path, 
-				std::string& LDPM_GeoName);
+				std::string& LDPM_GeoName, bool isFiber = false);
         
     /// Access the list of elements used by the last built beam.
     /// It can be useful for changing properties afterwards.

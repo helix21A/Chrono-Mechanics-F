@@ -21,6 +21,13 @@
 #include "chrono/physics/ChSystem.h"
 #include "chrono_ldpm/ChBuilderLDPM.h"
 
+#include <fstream>
+
+static std::ofstream& GetFiberAssignFile() {
+    static std::ofstream file("fiber_assign_debug.dat", std::ios::out);
+    return file;
+}
+
 using namespace chrono;
 using namespace fea;
 
@@ -231,7 +238,8 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::shared
                     std::istringstream sline(line);
                     sline >> tet >> facet >> fn >> fm >> fl >> s >> l >> df >> ID;
 
-                    std::vector<double> fiber = {fn, fm, fl, s, l, df, ID, 0.0, 0.0, 0.0, 0.0,0.0};
+                    //std::vector<double> fiber = {fn, fm, fl, s, l, df, ID, 0.0, 0.0, 0.0, 0.0,0.0};
+                    std::vector<double> fiber = {fn, fm, fl, s, l, df, ID, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 					// fiber << fn <<fm <<fl << short length <<long length<<df<<ID<< vmaxs << vmaxl << pmaxs << pmaxl << kf tangent stiffness
                     tetID.push_back(tet-1);
                     facetID.push_back(facet-1);
@@ -330,6 +338,13 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::shared
 				if (isFiber == true && ifiber < tetID.size() ) {
 					//std::cout << "fiber_info tetID="<<tetID[ifiber]<<facetID[ifiber] << std::endl;
 					//std::cout << "facet ID="<<iel<<idfacet << std::endl;
+					if (tetID[ifiber] < iel || (tetID[ifiber] == iel && facetID[ifiber] < idfacet)) {
+						//GetFiberAssignFile() << "ORDER_SKIP\tentry\t" << ifiber
+						//                     << "\tfiber_tet\t" << tetID[ifiber] << "\tfiber_facet\t" << facetID[ifiber]
+						//                     << "\tbuilder_tet\t" << iel << "\tbuilder_facet\t" << idfacet
+						//                     << "\n";
+						//GetFiberAssignFile().flush();
+					}
                     while (tetID[ifiber] == iel && facetID[ifiber] == idfacet) {
 						
                         std::vector<double> fiber_facet = fibers[ifiber];
@@ -352,6 +367,12 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::shared
 				}
 				//std::cout << "finish writinh facet ID="<<iel<<idfacet << std::endl;
 				
+				if (!fiber_info.empty()) {
+					//GetFiberAssignFile() << "ASSIGN\ttet\t" << iel << "\tfacet\t" << idfacet
+					//                     << "\tnfiber\t" << fiber_info.size()
+					//                     << "\tarea\t" << area << "\n";
+				}
+
 				msection->Set_fiber(fiber_info);
 
 				msection->Set_material(vect_mat);
@@ -428,7 +449,7 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::shared
 
 
 void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::vector<std::shared_ptr<ChMaterialVECT>> vect_mat, std::string& LDPM_data_path, 
-				std::string& LDPM_GeoName){
+				std::string& LDPM_GeoName, bool isFiber){
 	//
 	std::vector<std::vector<double>> Mfacet;
 	std::vector<std::vector<int>> MtetIDs;
@@ -445,6 +466,12 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::vector
         std::ifstream elemFile(elemFilename);
 	std::ifstream facetFile(facetFilename);	
 	std::ifstream verticesFile(verticesFilename);
+
+	std::ifstream fiberFile;
+	if (isFiber == true) {
+        std::string fiberFilename = LDPM_data_path + LDPM_GeoName + "-data-fiberfacet.dat";
+        fiberFile.open(fiberFilename);
+    }
     ////////////////////////////////////////////////////////////////////////
     //
     // Read node info from Freecad produced "<projectname>-data-nodes.dat" file
@@ -564,6 +591,41 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::vector
     
     }
     */
+
+    ////////////////////////////////////////////////////////////////////////
+    //
+    // Read fiber info from Freecad produced "<projectname>-data-fiberfacet.dat" file
+    //       ( Tet Facet fN fM fL S(short length) L(long length) df ID)
+    //
+    ////////////////////////////////////////////////////////////////////////
+    std::vector<std::vector<double>> fibers;
+    std::vector<int> tetID;
+    std::vector<int> facetID;
+    if (isFiber == true) {
+        if (fiberFile.is_open()) {
+            int tet, facet;
+            double fn, fm, fl, s, l, df, ID;
+
+            std::string line;
+            while (std::getline(fiberFile, line)) {
+                if (!line.empty() && std::isdigit(line[0])) {
+                    std::istringstream sline(line);
+                    sline >> tet >> facet >> fn >> fm >> fl >> s >> l >> df >> ID;
+
+                    std::vector<double> fiber = {fn, fm, fl, s, l, df, ID, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+                    tetID.push_back(tet-1);
+                    facetID.push_back(facet-1);
+                    fibers.push_back(fiber);
+                }
+            }
+
+            std::cout << "fiber intersection " << fibers.size() << std::endl;
+
+        } else {
+            throw std::runtime_error("ERROR opening fiber file \n");
+            exit(EXIT_FAILURE);
+        }
+    }
     	
 	////////////////////////////////////////////////////////////////////////
     //
@@ -573,6 +635,7 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::vector
 	////////////////////////////////////////////////////////////////////////  
 	if (facetFile.is_open()) {
        	//
+		int ifiber=0;
 		        	
        		unsigned int idfacet=0, iel_1=-1;
 		double val;
@@ -608,9 +671,10 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::vector
 				// Get element object and create a section object for it
 				//
 				auto elem = std::dynamic_pointer_cast<ChElementLDPM>(my_mesh->GetElement(iel));
-				if (iel_1!=iel)					        				
-					iel_1=iel;
-					idfacet=0;
+                if (iel_1 != iel) {
+                    iel_1 = iel;
+                    idfacet = 0;
+				}
 				
 				//
 				auto msection = chrono_types::make_shared<ChSectionLDPM>();				
@@ -635,7 +699,20 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::vector
 				nmL(2,2)=facetvec[17];
 
 				matFlag=int(facetvec[18]);
-				
+
+				std::vector<std::vector<double>> fiber_info;
+				if (isFiber == true && ifiber < tetID.size() ) {
+                    while (tetID[ifiber] == iel && facetID[ifiber] == idfacet) {
+                        std::vector<double> fiber_facet = fibers[ifiber];
+                        fiber_info.push_back(fiber_facet);
+                        ++ifiber;
+						if (ifiber>=tetID.size()){
+							break;
+						}
+                    }
+				}
+
+				msection->Set_fiber(fiber_info);
 				msection->Set_material(vect_mat[matFlag]);
 				msection->Set_area(area);
 				msection->Set_center(facetC);
@@ -656,7 +733,7 @@ void ChBuilderLDPM::read_LDPM_info(std::shared_ptr<ChMesh> my_mesh,  std::vector
 				elem->AddVertNodeVec(node_vec);
 				
 				
-				idfacet+1;				
+				++idfacet;				
 
 			}	
 					
